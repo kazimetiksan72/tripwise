@@ -1,0 +1,11 @@
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.env*
+!.env.example
+!.env.local.example
+node_modules/
+dist/
+.vercel/
+.DS_Store
