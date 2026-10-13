@@ -4,8 +4,7 @@ import { isAdmin, methodNotAllowed, readSession } from "../../lib/session.js";
 export default async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
   const session = await readSession(req);
-  if (!session) return res.status(401).json({ error: "Giriş gerekli" });
-  if (!isAdmin(session.appleSub, session.emailVerified ? session.email : "")) return res.status(403).json({ error: "Bu listeyi görüntüleme yetkin yok" });
+  if (!isAdmin(session)) return res.status(401).json({ error: "Yönetici girişi gerekli" });
   const page = Math.max(1, Math.min(100_000, Number.parseInt(req.query.page || "1", 10) || 1));
   const limit = 50;
   const collection = await getUsers();

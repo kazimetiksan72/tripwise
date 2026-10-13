@@ -1,53 +1,40 @@
-# FişGaranti
+# FişGaranti web paneli ve API
 
-FişGaranti is a Vercel-ready React frontend and Node.js serverless API for receipt analysis and account management.
+React yönetim paneli ve Vercel Node.js API fonksiyonlarıdır. Mobil uygulama native Apple tokenı ile giriş yapar; web paneli MongoDB'de saklanan yönetici e-posta ve parola kaydıyla giriş yapar.
 
-## Local web development
+## Yerel geliştirme
 
-1. Use Node.js 22 and run `npm install`.
-2. Copy `.env.example` to `.env.local`. Add the MongoDB connection string and the Apple credentials described below. `.env.local` is ignored by Git.
-3. Run `npm run dev` and open the Vite URL. Vite serves the React frontend; run API functions on Vercel or with `vercel dev` for full Apple/MongoDB integration.
-4. `npm run build` creates the Vercel static frontend in `dist`.
+1. Node.js 22 ve MongoDB Atlas bağlantısını ayarlayın.
+2. `.env.example` dosyasını `.env.local` olarak kopyalayın. `MONGODB_URI`, `SESSION_SECRET`, `APPLE_IOS_BUNDLE_ID` ve `OPENAI_API_KEY` değerlerini girin.
+3. Web panelini `npm run dev` ile açın. Vercel API fonksiyonlarını yerelde kullanmak için `vercel dev` çalıştırın.
+4. İlk yönetici hesabını eklemek için `.env.local` içine `ADMIN_EMAIL`, en az 12 karakterli `ADMIN_PASSWORD` ve isteğe bağlı `ADMIN_NAME` değerlerini yazın. Aynı dosyada production ile aynı `MONGODB_URI` olmalı. Ardından `npm run create-admin` çalıştırın. Parola bcrypt ile hashlenerek MongoDB `admins` koleksiyonuna kaydedilir.
 
-The supplied MongoDB URI has been written to the ignored local `.env.local`; configure the same `MONGODB_URI` in Vercel Project Settings → Environment Variables before deployment. The default database name is `fisgaranti`.
+## API uçları
 
-## Vercel setup
+- `POST /api/auth/apple/nonce` — mobil Apple girişine özel, 5 dakikada sona eren tek kullanımlık nonce üretir.
+- `POST /api/auth/apple` — Apple identity tokenını imza, issuer, audience ve nonce kontrollerinden geçirir; MongoDB'de mobil kullanıcı kaydını oluşturur/günceller ve mobil bearer token verir.
+- `GET /api/auth/me` — web yönetici oturumunu veya mobil bearer oturumunu döndürür.
+- `POST /api/auth/logout` — web yönetici çerezini temizler.
+- `POST /api/receipts` — mobil fotoğrafı OpenAI ile analiz eder ve çıkarılan alanları kullanıcının MongoDB fiş kaydına yazar.
+- `GET /api/receipts` — oturum açmış mobil kullanıcının kendi fişlerini listeler.
+- `DELETE /api/receipts/:id` — kullanıcının kendi fiş kaydını siler.
+- `POST /api/admin/auth/login` — normal e-posta/şifre yönetici girişi yapar ve HttpOnly oturum çerezi verir.
+- `GET /api/admin/auth/me` — mevcut yönetici profilini döndürür.
+- `GET /api/admin/users?page=1` — yöneticiye mobil kullanıcı listesini sunar.
+- `GET /api/admin/receipts?page=1` — yöneticiye tüm mobil fiş kayıtlarını sayfalı sunar.
+- `POST /api/analyze-receipt` — yönetim panelinde seçilen görselleri analiz eder ve analiz sonucunu da MongoDB'ye kaydeder.
 
-Import the project into Vercel. The repository root is the project root; `vercel.json` selects Vite, runs `npm run build`, publishes `dist`, and routes `/api/*` to serverless functions. Select Node.js 22.
+## Vercel değişkenleri
 
-Set these Environment Variables in Vercel (Production and Preview as needed):
-
-| Variable | Purpose |
+| Değişken | Kullanım |
 | --- | --- |
-| `MONGODB_URI` | MongoDB Atlas connection string (secret). |
-| `MONGODB_DB` | Optional database name; defaults to `fisgaranti`. |
-| `APPLE_CLIENT_ID` | Apple Services ID for the website. |
-| `VITE_APPLE_CLIENT_ID` | Same Services ID; embedded in the public frontend to start Apple JS. |
-| `VITE_APPLE_REDIRECT_URI` | Same redirect URL as `APPLE_REDIRECT_URI`; defaults to the deployment origin. |
-| `APPLE_TEAM_ID` | Apple Developer Team ID. |
-| `APPLE_KEY_ID` | Sign in with Apple key ID. |
-| `APPLE_PRIVATE_KEY_BASE64` | Base64-encoded `.p8` private key; keep secret. |
-| `APPLE_REDIRECT_URI` | Optional redirect URL, which must exactly match the Apple Services ID configuration. |
-| `SESSION_SECRET` | Random secret with at least 32 characters for signed sessions. |
-| `ADMIN_EMAILS` | Comma-separated, verified Apple emails allowed to view the user list. |
-| `ADMIN_APPLE_SUBJECTS` | Optional comma-separated Apple subject IDs allowed to view the user list. |
-| `OPENAI_API_KEY` | OpenAI API key. Kept server-side in Vercel, never included in the browser bundle. |
-| `OPENAI_MODEL` | Optional model override; defaults to `gpt-6-luna`. |
+| `MONGODB_URI` | MongoDB bağlantı URI'si (gizli). |
+| `MONGODB_DB` | İsteğe bağlı veritabanı adı; varsayılan `fisgaranti`. |
+| `SESSION_SECRET` | Oturum imzalama için en az 32 karakterli rastgele değer. |
+| `APPLE_IOS_BUNDLE_ID` | Apple token audience değeri; iOS Bundle ID ile aynı olmalı (`com.pikselmutfak.tripwise`). |
+| `OPENAI_API_KEY` | Sunucudaki OpenAI anahtarı; mobil/web istemciye eklenmez. |
+| `OPENAI_MODEL` | İsteğe bağlı analiz modeli; varsayılan `gpt-6-luna`. |
 
-Apple Developer setup is required before login works: enable Sign in with Apple for an App ID, create a Services ID, associate it with the primary App ID, add the Vercel deployment domain and exact return URL, and create a Sign in with Apple key. Configure the same Services ID as `APPLE_CLIENT_ID` and `VITE_APPLE_CLIENT_ID`; configure `APPLE_REDIRECT_URI` and `VITE_APPLE_REDIRECT_URI` to the same return URL. To make your verified Apple email an admin, add it to `ADMIN_EMAILS`; alternatively add the Apple `sub` from the MongoDB `users` collection to `ADMIN_APPLE_SUBJECTS`. Rebuild after changing `VITE_*` values because Vite embeds them in the frontend.
+Vercel projesi `vercel.json` üzerinden Vite build ve Node.js 22 API fonksiyonları kullanır. Yönetici parolası Vercel ortam değişkeninde tutulmaz; `npm run create-admin` ile hashlenerek MongoDB'ye yazılır. İlk deployment'tan sonra yönetim paneline giriş yapabilmek için en az bir yönetici hesabını bu komutla oluşturun. Yönetici kaydı eklemek veya parolayı değiştirmek için aynı komutu yeniden çalıştırın.
 
-Encode the downloaded Apple `.p8` key for the Vercel variable without committing the file: `base64 < AuthKey_KEYID.p8 | tr -d '\n'`.
-
-## Authentication and stored data
-
-The browser receives an Apple authorization code. The Node API exchanges it with Apple, verifies the Apple-signed identity token, checks its audience, issuer and nonce, then upserts the user in MongoDB and issues a seven-day HttpOnly, Secure, SameSite=Lax session cookie. User records contain Apple subject, verified email flags, optional first-login name, creation time, and last-login time. Apple tokens, passwords, receipt images, and OCR data are not stored in the user collection. The admin list is paginated and checks the server-side allow-list on every request.
-
-API routes:
-
-- `POST /api/auth/apple` — exchange Apple authorization code, verify identity, upsert user, create session.
-- `GET /api/auth/me` — current signed-in profile.
-- `POST /api/auth/logout` — clear the session cookie.
-- `GET /api/admin/users?page=1` — administrator-only, paginated user list.
-- `POST /api/analyze-receipt` — signed-in receipt analysis using the Vercel `OPENAI_API_KEY`.
-
-Receipt analysis is a separate, explicit user action. Images are resized in the browser, sent to the Node API, and forwarded to OpenAI with `store: false`; this setting is not a zero-retention guarantee. The user collection itself contains no receipt documents. OpenAI API usage is billed to the API account. Vercel serverless request-size limits apply; the UI caps images and payload size accordingly.
+Gelen fiş görselleri kalıcı olarak saklanmaz. Görseller OpenAI Responses API'ye `store: false` ile analiz amacıyla gönderilir; çıkarılan yapılandırılmış belge alanları kullanıcı kimliğiyle MongoDB'de tutulur.

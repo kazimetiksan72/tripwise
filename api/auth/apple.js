@@ -1,6 +1,7 @@
-import { exchangeAndVerifyAppleCode } from "../../lib/apple.js";
-import { getUsers } from "../../lib/mongodb.js";
-import { createSession, isAdmin, methodNotAllowed, setSessionCookie } from "../../lib/session.js";
+import { createHash } from "node:crypto";
+import { verifyMobileIdentityToken } from "../../lib/apple.js";
+import { getAuthChallenges, getUsers } from "../../lib/mongodb.js";
+import { createSession, methodNotAllowed } from "../../lib/session.js";
 
 function cleanName(value) {
   if (typeof value !== "string") return "";
@@ -10,12 +11,25 @@ function cleanName(value) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
   try {
-    const { code, nonce, displayName } = req.body || {};
-    if (typeof code !== "string" || typeof nonce !== "string") return res.status(400).json({ error: "Apple authorization code and nonce are required" });
-    const identity = await exchangeAndVerifyAppleCode(code, nonce);
+    const { identityToken, nonce, fullName } = req.body || {};
+    if (typeof identityToken !== "string" || identityToken.length > 12_000 || typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce)) {
+      return res.status(400).json({ error: "Apple giriş bilgileri geçersiz." });
+    }
+    let identity;
+    try {
+      identity = await verifyMobileIdentityToken(identityToken, nonce);
+    } catch (error) {
+      console.error("Apple identity verification failed", error.name);
+      return res.status(error.message === "APPLE_IOS_BUNDLE_ID is not configured" ? 503 : 401).json({ error: "Apple kimliği doğrulanamadı. Apple ayarlarını kontrol edin." });
+    }
+    const nonceHash = createHash("sha256").update(nonce).digest("hex");
+    const challenges = await getAuthChallenges();
+    const challenge = await challenges.findOneAndDelete({ nonceHash, expiresAt: { $gt: new Date() } });
+    if (!challenge) return res.status(401).json({ error: "Giriş isteğinin süresi doldu. Yeniden deneyin." });
+
     const users = await getUsers();
     const now = new Date();
-    const name = cleanName(displayName);
+    const name = cleanName(fullName);
     const result = await users.findOneAndUpdate(
       { appleSub: identity.appleSub },
       {
@@ -26,12 +40,13 @@ export default async function handler(req, res) {
     );
     const user = result.value ?? result;
     if (!user) throw new Error("User record could not be loaded");
-    const role = isAdmin(user.appleSub, user.emailVerified ? user.email : "") ? "admin" : "user";
-    const session = await createSession({ ...user, role });
-    setSessionCookie(res, session);
-    return res.status(200).json({ user: { id: user.appleSub, email: user.email, name: user.name || "", role } });
+    const token = await createSession(user, "mobile");
+    return res.status(200).json({
+      token,
+      user: { id: user.appleSub, email: user.email || null, display_name: user.name || null },
+    });
   } catch (error) {
-    console.error("Apple sign-in failed", error.message);
-    return res.status(401).json({ error: "Apple ile giriş doğrulanamadı. Apple ve sunucu ayarlarını kontrol et." });
+    console.error("Mobile Apple sign-in failed", error.name);
+    return res.status(503).json({ error: "Giriş servisi şu anda kullanılamıyor." });
   }
 }

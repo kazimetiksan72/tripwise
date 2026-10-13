@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const appleClientId = import.meta.env.VITE_APPLE_CLIENT_ID || "";
-const appleScript = "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
-
-function randomToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
 function initials(user) {
   const name = user?.name?.trim();
   if (name) return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toLocaleUpperCase("tr-TR");
@@ -18,8 +11,8 @@ function dateLabel(value) {
 }
 function formatMoney(value, currency) {
   if (!value) return "—";
-  const normalized = String(value).replaceAll(".", "").replace(",", ".");
-  const amount = Number(normalized);
+  const normalized = typeof value === "number" ? value : Number(String(value).replaceAll(".", "").replace(",", "."));
+  const amount = normalized;
   if (!Number.isFinite(amount)) return `${value} ${currency || ""}`;
   try { return new Intl.NumberFormat("tr-TR", { style: "currency", currency: currency || "TRY" }).format(amount); }
   catch { return `${value} ${currency || ""}`; }
@@ -36,6 +29,10 @@ export default function App() {
   const [userPage, setUserPage] = useState(1);
   const [userTotal, setUserTotal] = useState(0);
   const [userPages, setUserPages] = useState(1);
+  const [receipts, setReceipts] = useState([]);
+  const [receiptPage, setReceiptPage] = useState(1);
+  const [receiptTotal, setReceiptTotal] = useState(0);
+  const [receiptPages, setReceiptPages] = useState(1);
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
@@ -53,34 +50,31 @@ export default function App() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { if (user?.role === "admin" && section === "users") loadUsers(userPage); }, [user, section, userPage, loadUsers]);
-
-  async function signInWithApple() {
-    if (!appleClientId) { setNotice("Apple girişi henüz yapılandırılmamış. Vercel’de VITE_APPLE_CLIENT_ID değerini ekleyin."); return; }
+  const loadReceipts = useCallback(async (page = 1) => {
     setLoading(true); setNotice("");
     try {
-      if (!window.AppleID) {
-        await new Promise((resolve, reject) => {
-          const existing = document.querySelector(`script[src="${appleScript}"]`);
-          if (existing) { existing.addEventListener("load", resolve, { once: true }); existing.addEventListener("error", reject, { once: true }); return; }
-          const script = document.createElement("script"); script.src = appleScript; script.async = true; script.onload = resolve; script.onerror = reject; document.head.append(script);
-        });
-      }
-      const state = randomToken();
-      const nonce = randomToken();
-      sessionStorage.setItem("fg_apple_state", state);
-      window.AppleID.auth.init({ clientId: appleClientId, scope: "name email", redirectURI: import.meta.env.VITE_APPLE_REDIRECT_URI || window.location.origin, state, nonce, usePopup: true });
-      const result = await window.AppleID.auth.signIn();
-      if (result.authorization?.state !== sessionStorage.getItem("fg_apple_state")) throw new Error("Apple giriş oturumu doğrulanamadı. Yeniden dene.");
-      const displayName = [result.user?.name?.firstName, result.user?.name?.lastName].filter(Boolean).join(" ").slice(0, 120);
-      const response = await fetch("/api/auth/apple", {
+      const response = await fetch(`/api/admin/receipts?page=${page}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Fiş listesi alınamadı.");
+      setReceipts(body.receipts); setReceiptPage(body.page); setReceiptPages(body.pages || 1); setReceiptTotal(body.total);
+    } catch (error) { setNotice(error.message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { if (user?.role === "admin" && section === "users") loadUsers(userPage); }, [user, section, userPage, loadUsers]);
+  useEffect(() => { if (user?.role === "admin" && section === "receipts") loadReceipts(receiptPage); }, [user, section, receiptPage, loadReceipts]);
+
+  async function signInWithPassword(email, password) {
+    setLoading(true); setNotice("");
+    try {
+      const response = await fetch("/api/admin/auth/login", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: result.authorization?.code, nonce, displayName }),
+        body: JSON.stringify({ email, password }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Apple ile giriş başarısız oldu.");
+      if (!response.ok) throw new Error(body.error || "E-posta veya şifre hatalı.");
       setUser(body.user); setSection("home"); setNotice("");
-    } catch (error) { setNotice(error.message || "Apple ile giriş tamamlanamadı."); }
+    } catch (error) { setNotice(error.message || "Giriş tamamlanamadı."); }
     finally { setLoading(false); }
   }
 
@@ -131,23 +125,23 @@ export default function App() {
     finally { setLoading(false); }
   }
 
-  const activeLabel = useMemo(() => section === "users" ? "Kullanıcılar" : "Ana sayfa", [section]);
+  const activeLabel = useMemo(() => section === "users" ? "Kullanıcılar" : section === "receipts" ? "Fişler" : "Ana sayfa", [section]);
   if (user === undefined) return <div className="boot"><div className="brand-mark"><span>F</span></div><p>FişGaranti açılıyor…</p></div>;
-  if (!user) return <Login loading={loading} notice={notice} onSignIn={signInWithApple} />;
+  if (!user) return <Login loading={loading} notice={notice} onSignIn={signInWithPassword} />;
 
   return <div className="app-shell">
     <aside className="sidebar">
       <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setSection("home"); }}><span className="brand-mark"><span>F</span></span><span><b>fişgaranti</b><small>ALIŞVERİŞ ARŞİVİN</small></span></a>
       <div className="nav-label">ÇALIŞMA ALANI</div>
       <button className={`nav-item ${section === "home" ? "selected" : ""}`} onClick={() => setSection("home")}><Icon name="grid" />Genel bakış</button>
-      {user.role === "admin" && <><div className="nav-label admin-label">YÖNETİM</div><button className={`nav-item ${section === "users" ? "selected" : ""}`} onClick={() => setSection("users")}><Icon name="users" />Kullanıcılar<span className="nav-count">{userTotal || "—"}</span></button></>}
+      {user.role === "admin" && <><div className="nav-label admin-label">YÖNETİM</div><button className={`nav-item ${section === "receipts" ? "selected" : ""}`} onClick={() => setSection("receipts")}><Icon name="receipt" />Fişler<span className="nav-count">{receiptTotal || "—"}</span></button><button className={`nav-item ${section === "users" ? "selected" : ""}`} onClick={() => setSection("users")}><Icon name="users" />Kullanıcılar<span className="nav-count">{userTotal || "—"}</span></button></>}
       <div className="sidebar-bottom"><div className="privacy"><Icon name="shield" /><div><b>Gizliliğin önceliğimiz</b><span>Belgeleriniz izniniz olmadan analiz edilmez.</span></div></div><button className="profile" onClick={signOut}><span className="avatar">{initials(user)}</span><span className="profile-copy"><b>{user.name || "Hesabım"}</b><small>{user.email}</small></span><Icon name="logout" /></button></div>
     </aside>
     <main className="main-area">
       <header className="topbar"><div><span className="eyebrow">FİŞGARANTİ / {activeLabel.toLocaleUpperCase("tr-TR")}</span><h1>{activeLabel}</h1></div><div className="top-actions"><span className="secure-pill"><Icon name="lock" /> Güvenli oturum</span><button className="avatar top-avatar" title="Çıkış yap" onClick={signOut}>{initials(user)}</button></div></header>
       {notice && <div className="notice" role="status"><Icon name="info" />{notice}<button onClick={() => setNotice("")}>×</button></div>}
-      {section === "users" && user.role === "admin" ? <UserManagement users={users} total={userTotal} page={userPage} pages={userPages} loading={loading} onPage={setUserPage} onReload={() => loadUsers(userPage)} /> : <>
-        <section className="welcome-panel"><div className="welcome-copy"><div className="welcome-tag"><span className="sparkle">✳</span> ALIŞVERİŞLERİN GÜVENDE</div><h2>Fişler kaybolmasın,<br /><em>hakların</em> unutulmasın.</h2><p>Belgelerini tek yerde topla. Garanti ve alışveriş bilgilerini kolayca takip et.</p><div className="welcome-stat"><span className="stat-dot" /><span><b>Hesabın hazır</b><small>Apple ile güvenli giriş yapıldı</small></span></div></div><div className="hero-art" aria-hidden="true"><div className="art-glow" /><div className="art-paper back-paper" /><div className="art-paper main-paper"><div className="paper-brand"><span>F</span><b>fişgaranti</b><i>✓</i></div><div className="paper-rule" /><div className="paper-line wide" /><div className="paper-line" /><div className="paper-product"><span>Ürün kaydı</span><b>₺ 2.499,90</b></div><div className="paper-pill"><span>●</span> Belge güvende</div></div><div className="art-float float-star">✳</div><div className="art-float float-check">✓</div><div className="art-caption">HER BELGE<br /><b>YENİ BİR GÜVENCE</b></div></div></section>
+      {section === "users" && user.role === "admin" ? <UserManagement users={users} total={userTotal} page={userPage} pages={userPages} loading={loading} onPage={setUserPage} onReload={() => loadUsers(userPage)} /> : section === "receipts" && user.role === "admin" ? <ReceiptManagement receipts={receipts} total={receiptTotal} page={receiptPage} pages={receiptPages} loading={loading} onPage={setReceiptPage} onReload={() => loadReceipts(receiptPage)} /> : <>
+        <section className="welcome-panel"><div className="welcome-copy"><div className="welcome-tag"><span className="sparkle">✳</span> ALIŞVERİŞLERİN GÜVENDE</div><h2>Fişler kaybolmasın,<br /><em>hakların</em> unutulmasın.</h2><p>Belgelerini tek yerde topla. Garanti ve alışveriş bilgilerini kolayca takip et.</p><div className="welcome-stat"><span className="stat-dot" /><span><b>Hesabın hazır</b><small>E-posta ve şifreyle yönetici girişi</small></span></div></div><div className="hero-art" aria-hidden="true"><div className="art-glow" /><div className="art-paper back-paper" /><div className="art-paper main-paper"><div className="paper-brand"><span>F</span><b>fişgaranti</b><i>✓</i></div><div className="paper-rule" /><div className="paper-line wide" /><div className="paper-line" /><div className="paper-product"><span>Ürün kaydı</span><b>₺ 2.499,90</b></div><div className="paper-pill"><span>●</span> Belge güvende</div></div><div className="art-float float-star">✳</div><div className="art-float float-check">✓</div><div className="art-caption">HER BELGE<br /><b>YENİ BİR GÜVENCE</b></div></div></section>
         <section className="section-heading"><div><span className="eyebrow">BELGE MERKEZİ</span><h2>Alışverişini arşivle</h2><p>Fiş veya faturanın fotoğrafını seçerek başla.</p></div><span className="step-indicator"><b>01</b><i>/</i> 03</span></section>
         <section className={`upload-card ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); appendFiles(event.dataTransfer.files); }}>
           <div className="upload-icon"><Icon name="receipt" /></div><div className="upload-main"><h3>Fişini veya faturanı ekle</h3><p>Görüntüleriniz yalnız siz onayladıktan sonra OpenAI ile analiz edilir.</p><label className="file-button"><Icon name="plus" /> Fotoğraf seç<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { appendFiles(event.target.files); event.target.value = ""; }} /></label><span className="file-help">PNG, JPG veya WEBP · En fazla 8 sayfa</span></div><div className="upload-side"><Icon name="scan" /><span>Belgeyi<br />otomatik oku</span></div>
@@ -163,11 +157,20 @@ export default function App() {
 }
 
 function Login({ loading, notice, onSignIn }) {
-  return <main className="login-shell"><div className="login-card"><a className="brand login-brand" href="#"><span className="brand-mark"><span>F</span></span><span><b>fişgaranti</b><small>ALIŞVERİŞ ARŞİVİN</small></span></a><div className="login-visual"><div className="login-orbit orbit-one" /><div className="login-orbit orbit-two" /><div className="login-receipt"><div className="receipt-check">✓</div><b>Fişin güvende.</b><span>Hakların aklında.</span><div className="receipt-lines"><i /><i /><i /></div></div><span className="login-star star-one">✳</span><span className="login-star star-two">✳</span></div><div className="login-content"><span className="eyebrow">ALIŞVERİŞİNİZE GÜVENCE KATIN</span><h1>Her fişin bir<br /><em>hikâyesi</em> var.</h1><p>FişGaranti hesabına güvenli bir şekilde giriş yap; belgelerin ve garanti tarihlerin tek yerde olsun.</p>{notice && <div className="notice login-notice"><Icon name="info" />{notice}</div>}<button className="apple-button" onClick={onSignIn} disabled={loading}><AppleIcon />{loading ? "Apple ile bağlanılıyor…" : "Apple ile devam et"}</button><div className="login-privacy"><Icon name="lock" /><span>Apple hesabın güvenli doğrulama için kullanılır.<br />Şifreni hiçbir zaman görmeyiz.</span></div></div></div><div className="login-foot">GİRİŞ YAPARAK <a href="#privacy">GİZLİLİK POLİTİKASINI</a> KABUL EDERSİN</div></main>;
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  function submit(event) {
+    event.preventDefault();
+    onSignIn(email, password);
+  }
+  return <main className="login-shell"><div className="login-card"><a className="brand login-brand" href="#"><span className="brand-mark"><span>F</span></span><span><b>fişgaranti</b><small>YÖNETİM PANELİ</small></span></a><div className="login-visual"><div className="login-orbit orbit-one" /><div className="login-orbit orbit-two" /><div className="login-receipt"><div className="receipt-check">✓</div><b>Fişin güvende.</b><span>Hakların aklında.</span><div className="receipt-lines"><i /><i /><i /></div></div><span className="login-star star-one">✳</span><span className="login-star star-two">✳</span></div><div className="login-content"><span className="eyebrow">YÖNETİCİ GİRİŞİ</span><h1>FişGaranti<br /><em>yönetim paneli</em></h1><p>Yönetim hesabınızın e-posta adresi ve şifresiyle giriş yapın.</p>{notice && <div className="notice login-notice"><Icon name="info" />{notice}</div>}<form className="admin-login-form" onSubmit={submit}><label>E-posta<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@ornek.com" /></label><label>Şifre<input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Şifreniz" /></label><button className="apple-button" type="submit" disabled={loading}>{loading ? "Giriş yapılıyor…" : "E-posta ile giriş yap"}</button></form><div className="login-privacy"><Icon name="lock" /><span>Yönetici hesabı sunucu tarafında doğrulanır.<br />Şifreniz tarayıcıda saklanmaz.</span></div></div></div><div className="login-foot">YALNIZCA YETKİLİ YÖNETİCİ HESAPLARI</div></main>;
 }
-
 function UserManagement({ users, total, page, pages, loading, onPage, onReload }) {
   return <section className="users-page"><div className="users-intro"><div><span className="eyebrow">HESAP YÖNETİMİ</span><h2>Kullanıcılar</h2><p>Apple ile giriş yapmış hesaplar ve son aktivite bilgileri.</p></div><button className="secondary-button" onClick={onReload} disabled={loading}><Icon name="refresh" /> Yenile</button></div><div className="users-stats"><div><span>TOPLAM HESAP</span><b>{total}</b><small>kayıtlı kullanıcı</small></div><div><span>BU SAYFA</span><b>{users.length}</b><small>hesap gösteriliyor</small></div><div><span>GİRİŞ SAĞLAYICISI</span><b>Apple</b><small>doğrulanmış kimlik</small></div></div><div className="table-card"><div className="table-heading"><div><b>Kullanıcı listesi</b><span>Apple hesabı ve kayıt geçmişi</span></div><span className="table-total">{total} hesap</span></div><div className="table-scroll"><table><thead><tr><th>KULLANICI</th><th>APPLE E-POSTASI</th><th>KAYIT TARİHİ</th><th>SON GİRİŞ</th></tr></thead><tbody>{loading && users.length === 0 ? <tr><td colSpan="4" className="empty-table">Liste yükleniyor…</td></tr> : users.length === 0 ? <tr><td colSpan="4" className="empty-table">Henüz kullanıcı kaydı bulunmuyor.</td></tr> : users.map((item) => <tr key={item.appleSub}><td><div className="table-user"><span className="avatar">{initials(item)}</span><span><b>{item.name || "İsim paylaşılmadı"}</b><small>Apple hesabı</small></span></div></td><td><span className="email-cell">{item.email || "—"}</span>{item.isPrivateEmail && <span className="relay-chip">Özel e-posta</span>}</td><td>{dateLabel(item.createdAt)}</td><td><span className="last-login"><i />{dateLabel(item.lastLoginAt)}</span></td></tr>)}</tbody></table></div><div className="table-footer"><span>{total ? `${(page - 1) * 50 + 1}–${Math.min(page * 50, total)} / ${total} hesap` : "0 hesap"}</span><div><button disabled={page <= 1 || loading} onClick={() => onPage(page - 1)}>←</button><span>{page} / {pages}</span><button disabled={page >= pages || loading} onClick={() => onPage(page + 1)}>→</button></div></div></div><p className="admin-hint"><Icon name="shield" /> Bu görünüm yalnızca yetkili yönetici hesabına açıktır. Kullanıcı parolası veya Apple token’ı saklanmaz.</p></section>;
+}
+
+function ReceiptManagement({ receipts, total, page, pages, loading, onPage, onReload }) {
+  return <section className="receipt-admin-page"><div className="receipt-admin-intro"><div><span className="eyebrow">MOBİL KULLANICI KAYITLARI</span><h2>Fişler ve faturalar</h2><p>OpenAI tarafından analiz edilip kullanıcı hesabına kaydedilen belgeler.</p></div><button className="secondary-button" onClick={onReload} disabled={loading}><Icon name="refresh" /> Yenile</button></div><div className="receipt-admin-table"><div className="receipt-admin-row receipt-admin-head"><span>SATICI / BELGE</span><span>TÜR</span><span>TARİH</span><span>TUTAR</span></div>{loading && receipts.length === 0 ? <div className="receipt-admin-empty">Fişler yükleniyor…</div> : receipts.length === 0 ? <div className="receipt-admin-empty">Henüz kaydedilmiş fiş yok.</div> : receipts.map((item) => <div className="receipt-admin-row" key={item.id}><b>{item.merchantName || item.analysis?.seller?.name || "İsimsiz işletme"}</b><span>{item.documentType === "invoice" ? "Fatura" : item.documentType === "receipt" ? "Fiş" : "Belge"}</span><span>{dateLabel(item.issuedAt || item.createdAt)}</span><b>{item.total != null ? formatMoney(item.total, item.currency) : "—"}</b></div>)}</div><div className="receipt-admin-pager"><span>{total} kayıt · {page} / {pages}</span><div><button disabled={page <= 1 || loading} onClick={() => onPage(page - 1)}>Önceki</button> <button disabled={page >= pages || loading} onClick={() => onPage(page + 1)}>Sonraki</button></div></div></section>;
 }
 
 function AnalysisResult({ result }) {
@@ -175,7 +178,6 @@ function AnalysisResult({ result }) {
 }
 function Field({ label, value }) { return <div className="analysis-field"><span>{label}</span><b>{value || "Belgede bulunamadı"}</b></div>; }
 function MiniStep({ number, title, text }) { return <div className="mini-step"><span>{number}</span><div><b>{title}</b><small>{text}</small></div></div>; }
-function AppleIcon() { return <svg viewBox="0 0 18 22" aria-hidden="true"><path fill="currentColor" d="M14.95 11.72c.02-1.7.9-2.98 2.65-3.85-.98-1.4-2.47-2.17-4.45-2.33-1.87-.15-3.9 1.1-4.65 1.1-.8 0-2.58-1.05-4-1.05C1.57 5.64-.2 7.77-.2 11.21c0 1.01.18 2.06.53 3.15.47 1.43 2.17 4.94 3.94 4.88.88-.02 1.5-.62 2.79-.62 1.25 0 1.82.62 2.8.62 1.79-.03 3.33-3.22 3.78-4.66-2.4-1.13-2.38-2.8-2.4-2.86Zm-2.9-8.02c1.43-1.7 1.3-3.25 1.26-3.7-1.27.08-2.75.86-3.59 1.83-.92 1.02-1.46 2.28-1.35 3.7 1.37.1 2.63-.6 3.68-1.83Z" transform="translate(.5 1)" /></svg>; }
 function Icon({ name }) {
   const paths = {
     grid: <><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></>,

@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "create-admin": "node --env-file=.env.local scripts/create-admin.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "jose": "^6.1.0",
     "mongodb": "^6.20.0",
     "react": "^19.1.1",
@@ -17,5 +19,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "vite": "^7.1.7"
   },
-  "engines": { "node": "22.x" }
+  "engines": {
+    "node": "22.x"
+  }
 }
