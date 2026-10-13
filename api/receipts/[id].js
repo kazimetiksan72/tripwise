@@ -8,7 +8,9 @@ export default async function handler(req, res) {
   if (!session || session.tokenType !== "mobile") return res.status(401).json({ error: "Oturum geçersiz." });
   const id = req.query.id;
   if (typeof id !== "string" || !ObjectId.isValid(id)) return res.status(400).json({ error: "Fiş kimliği geçersiz." });
-  const result = await (await getReceipts()).deleteOne({ _id: new ObjectId(id), userId: session.appleSub, ownerType: "user" });
+  let result;
+  try { result = await (await getReceipts()).deleteOne({ _id: new ObjectId(id), userId: session.appleSub, ownerType: "user" }); }
+  catch (error) { console.error("MongoDB receipt deletion failed", error.name); return res.status(503).json({ error: "Veritabanı şu anda kullanılamıyor." }); }
   if (!result.deletedCount) return res.status(404).json({ error: "Fiş bulunamadı." });
   return res.status(200).json({ deleted: true });
 }

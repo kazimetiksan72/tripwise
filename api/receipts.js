@@ -6,7 +6,9 @@ export default async function handler(req, res) {
   if (!["GET", "POST"].includes(req.method)) return methodNotAllowed(res, ["GET", "POST"]);
   const session = await readSession(req);
   if (!session || session.tokenType !== "mobile") return res.status(401).json({ error: "Önce Apple hesabınızla giriş yapın." });
-  const receipts = await getReceipts();
+  let receipts;
+  try { receipts = await getReceipts(); }
+  catch (error) { console.error("MongoDB receipt connection failed", error.name); return res.status(503).json({ error: "Veritabanı şu anda kullanılamıyor." }); }
 
   if (req.method === "GET") {
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit || "20", 10) || 20));
